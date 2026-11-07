@@ -956,8 +956,13 @@ class MessageOrchestrator:
         # Group chat: store message in history buffer; only respond if prefixed
         chat_type = update.effective_chat.type if update.effective_chat else None
         if chat_type in (Chat.GROUP, Chat.SUPERGROUP):
-            if update.effective_chat.id != self.settings.group_chat_id:
-                return  # only the configured group gets answers
+            # Only the configured group gets answers, and only with its own
+            # directory: without one the group would get the full home boundary.
+            if (
+                update.effective_chat.id != self.settings.group_chat_id
+                or self.settings.group_chat_directory is None
+            ):
+                return
             buffer = cast(
                 list[dict[str, str]], context.chat_data.setdefault("_msg_buffer", [])
             )

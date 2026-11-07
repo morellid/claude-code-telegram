@@ -1083,3 +1083,20 @@ def test_owner_commands_and_media_are_private_only(agentic_settings, deps):
     assert media
     for h in media:
         assert "ChatType.PRIVATE" in repr(h.filters), repr(h.filters)
+
+
+async def test_group_without_valid_directory_is_ignored(tmp_dir, deps):
+    """If GROUP_CHAT_DIRECTORY is unset/invalid the group fails closed."""
+    settings = create_test_config(
+        approved_directory=str(tmp_dir), agentic_mode=True, group_chat_id=-100
+    )
+    assert settings.group_chat_directory is None
+    orchestrator = MessageOrchestrator(settings, deps)
+    claude_integration = AsyncMock()
+
+    await orchestrator.agentic_text(
+        _group_update(-100, "/claude hi"),
+        _group_context(settings, claude_integration),
+    )
+
+    claude_integration.run_command.assert_not_called()

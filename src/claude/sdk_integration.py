@@ -67,24 +67,60 @@ class StreamUpdate:
     metadata: Optional[Dict] = None
 
 
-_RESTRICTED_TOOLS = {"Bash", "Task"}
+# Tools available in restricted (group chat) mode. Everything else - Bash,
+# Monitor, Task, cron/remote triggers, ... - can run commands or escape the
+# boundary, so it is neither offered to Claude nor permitted by can_use_tool.
+GROUP_TOOLS = (
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Glob",
+    "Grep",
+    "NotebookEdit",
+    "WebSearch",
+    "WebFetch",
+    "TodoWrite",
+)
+
+# Paths inside the boundary that configure or execute code for Claude Code
+# or git; writing them from a group chat would escape the sandbox.
+_PROTECTED_NAMES = {".claude", ".mcp.json", "CLAUDE.md", ".git"}
 
 
 def _glob_base_dir(tool_name: str, tool_input: Dict[str, Any]) -> Optional[str]:
-    """Return the fixed directory prefix of an absolute/home Glob pattern."""
+    """Return the fixed directory prefix of a Glob pattern, if it has one."""
     pattern = tool_input.get("pattern") or ""
-    if tool_name != "Glob" or not pattern.startswith(("/", "~")):
+    if tool_name != "Glob":
         return None
     base = re.split(r"[*?\[{]", pattern, maxsplit=1)[0]
+    if "/" not in base:
+        return None  # e.g. "**/*.md": relative to cwd, which the CLI enforces
     return base.rsplit("/", 1)[0] or "/"
+
+
+def _is_protected_path(resolved: Optional[Path], boundary: Path) -> bool:
+    """Whether *resolved* is a Claude/git config path inside *boundary*."""
+    if resolved is None:
+        return False
+    try:
+        parts = resolved.relative_to(boundary.resolve()).parts
+    except ValueError:
+        return False
+    return any(part in _PROTECTED_NAMES for part in parts)
 
 
 def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
     approved_directory: Path,
+    restricted: bool = False,
 ) -> Any:
     """Create a can_use_tool callback for SDK-level tool permission validation.
+
+    With ``restricted`` (group chats) the callback denies any tool outside
+    :data:`GROUP_TOOLS`, never exempts ``~/.claude`` paths, and refuses
+    Claude/git config paths inside the boundary.
 
     The callback validates file path boundaries and bash directory boundaries
     *before* the SDK executes the tool, providing preventive security enforcement.
@@ -110,6 +146,12 @@ def _make_can_use_tool_callback(
         tool_input: Dict[str, Any],
         context: ToolPermissionContext,
     ) -> Any:
+        if restricted and tool_name not in GROUP_TOOLS:
+            logger.warning("can_use_tool denied tool in group", tool_name=tool_name)
+            return PermissionResultDeny(
+                message=f"{tool_name} is not available in this chat"
+            )
+
         # File path validation
         if tool_name in _FILE_TOOLS:
             file_path = (
@@ -120,10 +162,10 @@ def _make_can_use_tool_callback(
             )
             if file_path:
                 # Allow Claude Code internal paths (~/.claude/plans/, etc.)
-                if _is_claude_internal_path(file_path):
+                if not restricted and _is_claude_internal_path(file_path):
                     return PermissionResultAllow()
 
-                valid, _resolved, error = security_validator.validate_path(
+                valid, resolved, error = security_validator.validate_path(
                     file_path,
                     working_directory,
                     approved_directory_override=approved_directory,
@@ -136,6 +178,10 @@ def _make_can_use_tool_callback(
                         error=error,
                     )
                     return PermissionResultDeny(message=error or "Invalid file path")
+                if restricted and _is_protected_path(resolved, approved_directory):
+                    return PermissionResultDeny(
+                        message="Claude and git config files are read-only here"
+                    )
 
         # Bash directory boundary validation
         if tool_name in _BASH_TOOLS:
@@ -231,17 +277,14 @@ class ClaudeSDKManager:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
-            # A boundary narrower than approved_directory (group chats) gets no
-            # Bash or subagents: read-only shell commands bypass the path check.
-            if approved_directory is not None and (
+            # A boundary narrower than approved_directory (group chats) is
+            # locked down: fixed tool set, no auto-approve rules (they skip
+            # can_use_tool) and no settings files (they can define hooks).
+            restricted = approved_directory is not None and (
                 approved_directory.resolve() != self.config.approved_directory.resolve()
-            ):
-                sdk_allowed_tools = [
-                    t for t in sdk_allowed_tools if t not in _RESTRICTED_TOOLS
-                ]
-                sdk_disallowed_tools = sorted(
-                    set(sdk_disallowed_tools) | _RESTRICTED_TOOLS
-                )
+            )
+            if restricted:
+                sdk_allowed_tools = []
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
@@ -259,7 +302,8 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["project"],
+                tools=list(GROUP_TOOLS) if restricted else None,
+                setting_sources=[] if restricted else ["project"],
                 stderr=_stderr_callback,
             )
 
@@ -280,6 +324,7 @@ class ClaudeSDKManager:
                     security_validator=self.security_validator,
                     working_directory=working_directory,
                     approved_directory=effective_approved,
+                    restricted=restricted,
                 )
 
             # Resume previous session if we have a session_id

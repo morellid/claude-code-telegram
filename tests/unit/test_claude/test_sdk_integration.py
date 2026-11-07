@@ -20,6 +20,7 @@ from src.claude.sdk_integration import (
     ClaudeResponse,
     ClaudeSDKManager,
     StreamUpdate,
+    GROUP_TOOLS,
     _make_can_use_tool_callback,
 )
 from src.config.settings import Settings
@@ -941,10 +942,10 @@ class TestCanUseToolSearchTools:
 
 
 class TestRestrictedDirectoryTools:
-    """A narrower approved_directory (group chat) removes Bash and Task."""
+    """A boundary narrower than approved_directory (group chat) is locked down."""
 
     @pytest.mark.parametrize("disable_validation", [True, False])
-    async def test_narrower_boundary_disallows_bash_and_task(
+    async def test_narrower_boundary_uses_tool_allowlist(
         self, tmp_path, disable_validation
     ):
         group_dir = tmp_path / "vox"
@@ -973,11 +974,14 @@ class TestRestrictedDirectoryTools:
                 approved_directory=group_dir,
             )
         opts = captured_options[0]
-        assert {"Bash", "Task"} <= set(opts.disallowed_tools)
-        assert "Bash" not in opts.allowed_tools
-        assert "Task" not in opts.allowed_tools
+        assert set(opts.tools) == set(GROUP_TOOLS)
+        assert not {"Bash", "Task", "Monitor"} & set(opts.tools)
+        # allowed_tools rules auto-approve and would skip can_use_tool
+        assert opts.allowed_tools == []
+        # no settings files: a written .claude/settings.json must not load
+        assert opts.setting_sources == []
 
-    async def test_full_boundary_keeps_bash(self, tmp_path):
+    async def test_full_boundary_keeps_default_tools(self, tmp_path):
         config = Settings(
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
@@ -1000,7 +1004,64 @@ class TestRestrictedDirectoryTools:
                 working_directory=tmp_path,
                 approved_directory=tmp_path,
             )
-        assert "Bash" not in captured_options[0].disallowed_tools
+        assert captured_options[0].tools is None
+        assert captured_options[0].setting_sources == ["project"]
+
+
+class TestRestrictedCanUseTool:
+    """can_use_tool in restricted (group) mode, with the real validator."""
+
+    @pytest.fixture
+    def vox(self, tmp_path):
+        d = tmp_path / "vox"
+        (d / "sub").mkdir(parents=True)
+        return d
+
+    @pytest.fixture
+    def callback(self, vox):
+        from src.security.validators import SecurityValidator
+
+        return _make_can_use_tool_callback(
+            security_validator=SecurityValidator(
+                vox.parent, disable_security_patterns=True
+            ),
+            working_directory=vox,
+            approved_directory=vox,
+            restricted=True,
+        )
+
+    @pytest.mark.parametrize(
+        "tool_name,tool_input",
+        [
+            ("Monitor", {"command": "cat ~/secret"}),
+            ("CronCreate", {"prompt": "x"}),
+            ("Write", {"file_path": "~/.claude/settings.json", "content": "{}"}),
+            ("Read", {"file_path": "~/.claude/plans/p.md"}),
+            ("Write", {"file_path": "{vox}/.claude/settings.json", "content": "{}"}),
+            ("Edit", {"file_path": "{vox}/sub/.mcp.json"}),
+            ("Write", {"file_path": "{vox}/CLAUDE.md", "content": "x"}),
+            ("Write", {"file_path": "{vox}/.git/hooks/pre-commit", "content": "x"}),
+            ("Glob", {"pattern": "../../**/*.md"}),
+        ],
+    )
+    async def test_denies(self, callback, vox, tool_name, tool_input):
+        tool_input = {k: v.replace("{vox}", str(vox)) for k, v in tool_input.items()}
+        result = await callback(tool_name, tool_input, ToolPermissionContext())
+        assert isinstance(result, PermissionResultDeny), (tool_name, tool_input)
+
+    @pytest.mark.parametrize(
+        "tool_name,tool_input",
+        [
+            ("Write", {"file_path": "{vox}/sub/notes.md", "content": "x"}),
+            ("Read", {"file_path": "{vox}/sub/notes.md"}),
+            ("Glob", {"pattern": "sub/**/*.md"}),
+            ("WebSearch", {"query": "x"}),
+        ],
+    )
+    async def test_allows(self, callback, vox, tool_name, tool_input):
+        tool_input = {k: v.replace("{vox}", str(vox)) for k, v in tool_input.items()}
+        result = await callback(tool_name, tool_input, ToolPermissionContext())
+        assert isinstance(result, PermissionResultAllow), (tool_name, tool_input)
 
 
 class TestSessionIdFallback:

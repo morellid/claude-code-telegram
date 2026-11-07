@@ -254,13 +254,13 @@ class TestIsClaudeInternalPath:
             todo_file.touch()
             assert _is_claude_internal_path(str(todo_file)) is True
 
-    def test_settings_json_is_internal(self, tmp_path: Path) -> None:
-        """~/.claude/settings.json should be recognised as internal."""
+    def test_settings_json_is_not_internal(self, tmp_path: Path) -> None:
+        """~/.claude/settings.json can define hooks, so it is not exempt."""
         with patch("src.claude.monitor.Path.home", return_value=tmp_path):
             (tmp_path / ".claude").mkdir(parents=True)
             settings_file = tmp_path / ".claude" / "settings.json"
             settings_file.touch()
-            assert _is_claude_internal_path(str(settings_file)) is True
+            assert _is_claude_internal_path(str(settings_file)) is False
 
     def test_arbitrary_file_under_claude_dir_rejected(self, tmp_path: Path) -> None:
         """Files directly under ~/.claude/ (not in known subdirs) are rejected."""
