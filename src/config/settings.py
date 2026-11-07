@@ -284,7 +284,8 @@ class Settings(BaseSettings):
         None, description="Working directory for group chat"
     )
     group_trigger_prefix: str = Field(
-        "claude", description="Prefix required to trigger Claude in group chats"
+        "claude",
+        description="Command name (/<prefix>) that triggers Claude in group chats",
     )
 
     enable_project_threads: bool = Field(

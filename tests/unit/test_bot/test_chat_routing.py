@@ -89,10 +89,11 @@ def test_get_working_directory_falls_back_to_approved_directory(tmp_path) -> Non
     assert get_working_directory(999, settings) == tmp_path.resolve()
 
 
-def test_is_group_triggered_matches_plain_prefix() -> None:
-    """The plain prefix triggers with and without trailing text."""
-    assert is_group_triggered("claude", "claude") is True
-    assert is_group_triggered("claude summarize this", "claude") is True
+def test_is_group_triggered_ignores_plain_prefix() -> None:
+    """Only the /command form triggers; a plain leading word does not."""
+    assert is_group_triggered("claude", "claude") is False
+    assert is_group_triggered("claude summarize this", "claude") is False
+    assert is_group_triggered("/claudefoo", "claude") is False
 
 
 def test_is_group_triggered_matches_slash_prefix_variants() -> None:
@@ -107,15 +108,6 @@ def test_is_group_triggered_rejects_non_matching_messages() -> None:
     """Messages without the configured prefix do not trigger."""
     assert is_group_triggered("please ask claude", "claude") is False
     assert is_group_triggered("/other@test_bot summarize this", "claude") is False
-
-
-def test_strip_group_trigger_prefix_handles_plain_prefix() -> None:
-    """Plain-prefix messages are stripped down to their payload."""
-    assert strip_group_trigger_prefix("claude", "claude") == ""
-    assert (
-        strip_group_trigger_prefix("claude summarize this", "claude")
-        == "summarize this"
-    )
 
 
 def test_strip_group_trigger_prefix_handles_slash_prefix() -> None:
@@ -134,7 +126,9 @@ def test_strip_group_trigger_prefix_handles_slash_prefix() -> None:
 
 def test_build_group_prompt_returns_stripped_text_without_history() -> None:
     """Triggered messages without history do not get a history wrapper."""
-    assert build_group_prompt([], "claude summarize this", "claude") == "summarize this"
+    assert (
+        build_group_prompt([], "/claude summarize this", "claude") == "summarize this"
+    )
 
 
 def test_build_group_prompt_injects_recent_history() -> None:
@@ -144,7 +138,7 @@ def test_build_group_prompt_injects_recent_history() -> None:
         {"sender": "Bob", "text": "Second"},
     ]
 
-    prompt = build_group_prompt(history, "claude summarize this", "claude")
+    prompt = build_group_prompt(history, "/claude summarize this", "claude")
 
     assert prompt == (
         "[Recent group conversation:\nAlice: First\nBob: Second\n]\n\n" "summarize this"
@@ -158,7 +152,7 @@ def test_build_group_prompt_limits_history_to_context_window() -> None:
         for idx in range(HISTORY_CONTEXT_SIZE + 3)
     ]
 
-    prompt = build_group_prompt(history, "claude summarize this", "claude")
+    prompt = build_group_prompt(history, "/claude summarize this", "claude")
 
     assert "User 0: msg 0" not in prompt
     assert "User 1: msg 1" not in prompt

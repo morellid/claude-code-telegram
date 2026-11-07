@@ -350,8 +350,13 @@ class MessageOrchestrator:
         # Derive known commands dynamically — avoids drift when new commands are added
         self._known_commands: frozenset[str] = frozenset(cmd for cmd, _ in handlers)
 
+        # In groups only /new is available; owner commands (/restart, /repo,
+        # ...) stay in private chats.
         for cmd, handler in handlers:
-            app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
+            chat_filter = None if cmd == "new" else filters.ChatType.PRIVATE
+            app.add_handler(
+                CommandHandler(cmd, self._inject_deps(handler), filters=chat_filter)
+            )
 
         # Text messages -> Claude
         app.add_handler(
@@ -378,20 +383,27 @@ class MessageOrchestrator:
         # File uploads -> Claude
         app.add_handler(
             MessageHandler(
-                filters.Document.ALL, self._inject_deps(self.agentic_document)
+                filters.Document.ALL & filters.ChatType.PRIVATE,
+                self._inject_deps(self.agentic_document),
             ),
             group=10,
         )
 
         # Photo uploads -> Claude
         app.add_handler(
-            MessageHandler(filters.PHOTO, self._inject_deps(self.agentic_photo)),
+            MessageHandler(
+                filters.PHOTO & filters.ChatType.PRIVATE,
+                self._inject_deps(self.agentic_photo),
+            ),
             group=10,
         )
 
         # Voice messages -> transcribe -> Claude
         app.add_handler(
-            MessageHandler(filters.VOICE, self._inject_deps(self.agentic_voice)),
+            MessageHandler(
+                filters.VOICE & filters.ChatType.PRIVATE,
+                self._inject_deps(self.agentic_voice),
+            ),
             group=10,
         )
 
@@ -436,8 +448,13 @@ class MessageOrchestrator:
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
+        # In groups only /new is available; owner commands (/restart, /repo,
+        # ...) stay in private chats.
         for cmd, handler in handlers:
-            app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
+            chat_filter = None if cmd == "new" else filters.ChatType.PRIVATE
+            app.add_handler(
+                CommandHandler(cmd, self._inject_deps(handler), filters=chat_filter)
+            )
 
         app.add_handler(
             MessageHandler(
@@ -939,6 +956,8 @@ class MessageOrchestrator:
         # Group chat: store message in history buffer; only respond if prefixed
         chat_type = update.effective_chat.type if update.effective_chat else None
         if chat_type in (Chat.GROUP, Chat.SUPERGROUP):
+            if update.effective_chat.id != self.settings.group_chat_id:
+                return  # only the configured group gets answers
             buffer = cast(
                 list[dict[str, str]], context.chat_data.setdefault("_msg_buffer", [])
             )

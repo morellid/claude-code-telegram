@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -66,6 +67,18 @@ class StreamUpdate:
     metadata: Optional[Dict] = None
 
 
+_RESTRICTED_TOOLS = {"Bash", "Task"}
+
+
+def _glob_base_dir(tool_name: str, tool_input: Dict[str, Any]) -> Optional[str]:
+    """Return the fixed directory prefix of an absolute/home Glob pattern."""
+    pattern = tool_input.get("pattern") or ""
+    if tool_name != "Glob" or not pattern.startswith(("/", "~")):
+        return None
+    base = re.split(r"[*?\[{]", pattern, maxsplit=1)[0]
+    return base.rsplit("/", 1)[0] or "/"
+
+
 def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
@@ -76,7 +89,20 @@ def _make_can_use_tool_callback(
     The callback validates file path boundaries and bash directory boundaries
     *before* the SDK executes the tool, providing preventive security enforcement.
     """
-    _FILE_TOOLS = {"Write", "Edit", "Read", "create_file", "edit_file", "read_file"}
+    _FILE_TOOLS = {
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Read",
+        "Glob",
+        "Grep",
+        "LS",
+        "NotebookRead",
+        "NotebookEdit",
+        "create_file",
+        "edit_file",
+        "read_file",
+    }
     _BASH_TOOLS = {"Bash", "bash", "shell"}
 
     async def can_use_tool(
@@ -86,7 +112,12 @@ def _make_can_use_tool_callback(
     ) -> Any:
         # File path validation
         if tool_name in _FILE_TOOLS:
-            file_path = tool_input.get("file_path") or tool_input.get("path")
+            file_path = (
+                tool_input.get("file_path")
+                or tool_input.get("notebook_path")
+                or tool_input.get("path")
+                or _glob_base_dir(tool_name, tool_input)
+            )
             if file_path:
                 # Allow Claude Code internal paths (~/.claude/plans/, etc.)
                 if _is_claude_internal_path(file_path):
@@ -199,6 +230,18 @@ class ClaudeSDKManager:
             else:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
+
+            # A boundary narrower than approved_directory (group chats) gets no
+            # Bash or subagents: read-only shell commands bypass the path check.
+            if approved_directory is not None and (
+                approved_directory.resolve() != self.config.approved_directory.resolve()
+            ):
+                sdk_allowed_tools = [
+                    t for t in sdk_allowed_tools if t not in _RESTRICTED_TOOLS
+                ]
+                sdk_disallowed_tools = sorted(
+                    set(sdk_disallowed_tools) | _RESTRICTED_TOOLS
+                )
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(

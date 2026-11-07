@@ -411,3 +411,15 @@ class TestValidatePathApprovedDirectoryOverride:
             approved_directory_override=None,
         )
         assert valid is True
+
+    def test_tilde_path_is_expanded_before_boundary_check(
+        self, validator: SecurityValidator, dirs: dict[str, Path]
+    ) -> None:
+        """``~/x`` means the home dir (as tools expand it), not ``cwd/~/x``."""
+        valid, _resolved, error = validator.validate_path(
+            "~/secret.txt",
+            current_dir=dirs["sub"],
+            approved_directory_override=dirs["sub"],
+        )
+        assert valid is False
+        assert error is not None

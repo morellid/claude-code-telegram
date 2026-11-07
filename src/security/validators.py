@@ -7,6 +7,7 @@ Features:
 - Input sanitization
 """
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -159,7 +160,8 @@ class SecurityValidator:
             if not user_path or not user_path.strip():
                 return False, None, "Empty path not allowed"
 
-            user_path = user_path.strip()
+            # Expand ~ the way the tools do, so "~/x" is checked as $HOME/x
+            user_path = os.path.expanduser(user_path.strip())
 
             # Check for dangerous patterns (unless explicitly disabled)
             if not self.disable_security_patterns:

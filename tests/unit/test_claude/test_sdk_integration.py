@@ -900,6 +900,109 @@ class TestCanUseToolCallback:
         assert captured_options[0].can_use_tool is None
 
 
+class TestCanUseToolSearchTools:
+    """Glob/Grep/LS/Notebook tools are path-checked like Read/Write."""
+
+    @pytest.fixture
+    def security_validator(self):
+        validator = MagicMock()
+        validator.validate_path = MagicMock(return_value=(False, None, "outside"))
+        return validator
+
+    @pytest.fixture
+    def callback(self, security_validator, tmp_path):
+        return _make_can_use_tool_callback(
+            security_validator=security_validator,
+            working_directory=tmp_path,
+            approved_directory=tmp_path,
+        )
+
+    @pytest.mark.parametrize(
+        "tool_name,tool_input",
+        [
+            ("Glob", {"pattern": "*.md", "path": "/Users/x/personal"}),
+            ("Glob", {"pattern": "/Users/x/personal/**/*.md"}),
+            ("Grep", {"pattern": "iban", "path": "/Users/x/personal"}),
+            ("LS", {"path": "/Users/x"}),
+            ("NotebookEdit", {"notebook_path": "/Users/x/n.ipynb"}),
+            ("MultiEdit", {"file_path": "/Users/x/a.py"}),
+        ],
+    )
+    async def test_denies_outside_paths(self, callback, tool_name, tool_input):
+        result = await callback(tool_name, tool_input, ToolPermissionContext())
+        assert isinstance(result, PermissionResultDeny)
+
+    async def test_glob_relative_pattern_without_path_is_allowed(
+        self, callback, security_validator
+    ):
+        result = await callback("Glob", {"pattern": "**/*.md"}, ToolPermissionContext())
+        assert isinstance(result, PermissionResultAllow)
+        security_validator.validate_path.assert_not_called()
+
+
+class TestRestrictedDirectoryTools:
+    """A narrower approved_directory (group chat) removes Bash and Task."""
+
+    @pytest.mark.parametrize("disable_validation", [True, False])
+    async def test_narrower_boundary_disallows_bash_and_task(
+        self, tmp_path, disable_validation
+    ):
+        group_dir = tmp_path / "vox"
+        group_dir.mkdir()
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            disable_tool_validation=disable_validation,
+            claude_allowed_tools=["Read", "Bash", "Task"],
+        )
+        manager = ClaudeSDKManager(config)
+        captured_options: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="hi",
+                working_directory=group_dir,
+                approved_directory=group_dir,
+            )
+        opts = captured_options[0]
+        assert {"Bash", "Task"} <= set(opts.disallowed_tools)
+        assert "Bash" not in opts.allowed_tools
+        assert "Task" not in opts.allowed_tools
+
+    async def test_full_boundary_keeps_bash(self, tmp_path):
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            disable_tool_validation=True,
+        )
+        manager = ClaudeSDKManager(config)
+        captured_options: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="hi",
+                working_directory=tmp_path,
+                approved_directory=tmp_path,
+            )
+        assert "Bash" not in captured_options[0].disallowed_tools
+
+
 class TestSessionIdFallback:
     """Test fallback session ID extraction from StreamEvent messages."""
 

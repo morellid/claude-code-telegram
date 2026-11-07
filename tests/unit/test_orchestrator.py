@@ -990,3 +990,96 @@ async def test_bot_suffixed_command_not_forwarded(agentic_settings, deps):
     ) as mock_claude:
         await orchestrator._handle_unknown_command(update, context)
         mock_claude.assert_not_called()
+
+
+def _group_update(chat_id: int, text: str) -> MagicMock:
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_user.first_name = "Leo"
+    update.effective_chat.type = "group"
+    update.effective_chat.id = chat_id
+    update.message.text = text
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    progress_msg = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress_msg)
+    return update
+
+
+def _group_context(settings, claude_integration) -> MagicMock:
+    context = MagicMock()
+    context.chat_data = {}
+    context.bot_data = {
+        "settings": settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+    return context
+
+
+@pytest.fixture
+def vox_settings(tmp_dir):
+    vox = tmp_dir / "vox"
+    vox.mkdir()
+    return create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=True,
+        group_chat_id=-100,
+        group_chat_directory=str(vox),
+    )
+
+
+async def test_group_trigger_runs_claude_inside_group_directory(vox_settings, deps):
+    """/claude in the configured group runs with the group dir as boundary."""
+    orchestrator = MessageOrchestrator(vox_settings, deps)
+    response = MagicMock(session_id="s", content="ok", tools_used=[])
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=response)
+
+    await orchestrator.agentic_text(
+        _group_update(-100, "/claude hi"),
+        _group_context(vox_settings, claude_integration),
+    )
+
+    kwargs = claude_integration.run_command.call_args.kwargs
+    assert kwargs["working_directory"] == vox_settings.group_chat_directory
+    assert kwargs["approved_directory"] == vox_settings.group_chat_directory
+
+
+async def test_unconfigured_group_is_ignored(vox_settings, deps):
+    """The bot stays silent in any group other than GROUP_CHAT_ID."""
+    orchestrator = MessageOrchestrator(vox_settings, deps)
+    claude_integration = AsyncMock()
+
+    await orchestrator.agentic_text(
+        _group_update(-999, "/claude hi"),
+        _group_context(vox_settings, claude_integration),
+    )
+
+    claude_integration.run_command.assert_not_called()
+
+
+def test_owner_commands_and_media_are_private_only(agentic_settings, deps):
+    """Only /new works in groups; media never triggers Claude in groups."""
+    from telegram.ext import CommandHandler, MessageHandler
+
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    orchestrator.register_handlers(app)
+    handlers = [c.args[0] for c in app.add_handler.call_args_list]
+
+    for h in handlers:
+        if isinstance(h, CommandHandler):
+            private = "ChatType.PRIVATE" in repr(h.filters)
+            assert private is ("new" not in h.commands), h.commands
+    media = [
+        h
+        for h in handlers
+        if isinstance(h, MessageHandler)
+        and any(k in repr(h.filters) for k in ("PHOTO", "VOICE", "Document"))
+    ]
+    assert media
+    for h in media:
+        assert "ChatType.PRIVATE" in repr(h.filters), repr(h.filters)
