@@ -980,6 +980,10 @@ class TestRestrictedDirectoryTools:
         assert opts.allowed_tools == []
         # no settings files: a written .claude/settings.json must not load
         assert opts.setting_sources == []
+        # CLI-native restricted mode, and no MCP servers / claude.ai connectors
+        assert "restricted" in opts.extra_args
+        assert opts.strict_mcp_config is True
+        assert opts.env.get("ENABLE_CLAUDEAI_MCP_SERVERS") == "false"
 
     async def test_full_boundary_keeps_default_tools(self, tmp_path):
         config = Settings(

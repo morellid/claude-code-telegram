@@ -304,11 +304,20 @@ class ClaudeSDKManager:
                 system_prompt=base_prompt,
                 tools=list(GROUP_TOOLS) if restricted else None,
                 setting_sources=[] if restricted else ["project"],
+                # CLI-native restricted mode + no MCP servers or claude.ai
+                # connectors (Asana, Gmail, ...) in group chats.
+                extra_args={"restricted": None} if restricted else {},
+                strict_mcp_config=restricted,
+                env={"ENABLE_CLAUDEAI_MCP_SERVERS": "false"} if restricted else {},
                 stderr=_stderr_callback,
             )
 
             # Pass MCP server configuration if enabled
-            if self.config.enable_mcp and self.config.mcp_config_path:
+            if (
+                self.config.enable_mcp
+                and self.config.mcp_config_path
+                and not restricted
+            ):
                 options.mcp_servers = self._load_mcp_config(self.config.mcp_config_path)
                 logger.info(
                     "MCP servers configured",
