@@ -349,3 +349,65 @@ class TestSecurityValidator:
         assert "  " not in sanitized  # No double spaces
         assert not sanitized.startswith(" ")  # No leading space
         assert not sanitized.endswith(" ")  # No trailing space
+
+
+class TestValidatePathApprovedDirectoryOverride:
+    """Test approved_directory_override in validate_path()."""
+
+    @pytest.fixture
+    def dirs(self, tmp_path: Path) -> dict[str, Path]:
+        """Create a directory tree: approved/ with sub/ and sibling/."""
+        approved = tmp_path / "approved"
+        sub = approved / "sub"
+        sibling = approved / "sibling"
+        approved.mkdir()
+        sub.mkdir()
+        sibling.mkdir()
+        return {"approved": approved, "sub": sub, "sibling": sibling}
+
+    @pytest.fixture
+    def validator(self, dirs: dict[str, Path]) -> SecurityValidator:
+        return SecurityValidator(dirs["approved"], disable_security_patterns=True)
+
+    def test_path_inside_override_is_allowed(
+        self, validator: SecurityValidator, dirs: dict[str, Path]
+    ) -> None:
+        """A path inside the override directory is accepted."""
+        valid, resolved, error = validator.validate_path(
+            str(dirs["sub"]),
+            approved_directory_override=dirs["sub"],
+        )
+        assert valid is True
+        assert resolved == dirs["sub"].resolve()
+        assert error is None
+
+    def test_path_outside_override_but_inside_global_is_denied(
+        self, validator: SecurityValidator, dirs: dict[str, Path]
+    ) -> None:
+        """A path inside approved_directory but outside the override is denied."""
+        valid, resolved, error = validator.validate_path(
+            str(dirs["sibling"]),
+            approved_directory_override=dirs["sub"],
+        )
+        assert valid is False
+        assert resolved is None
+        assert error is not None
+        assert "outside approved directory" in error
+
+    def test_no_override_uses_global_approved(
+        self, validator: SecurityValidator, dirs: dict[str, Path]
+    ) -> None:
+        """Without an override, the global approved_directory is used."""
+        valid, resolved, error = validator.validate_path(str(dirs["sibling"]))
+        assert valid is True
+        assert resolved == dirs["sibling"].resolve()
+
+    def test_override_none_uses_global(
+        self, validator: SecurityValidator, dirs: dict[str, Path]
+    ) -> None:
+        """Passing None as override uses the global boundary."""
+        valid, resolved, error = validator.validate_path(
+            str(dirs["sibling"]),
+            approved_directory_override=None,
+        )
+        assert valid is True

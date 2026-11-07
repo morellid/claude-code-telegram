@@ -1,11 +1,36 @@
 """Telegram bot authentication middleware."""
 
 from datetime import UTC, datetime
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional, Set
 
 import structlog
 
 logger = structlog.get_logger()
+
+
+def _is_owner_required_and_missing(
+    user_id: int, event: Any, data: Dict[str, Any]
+) -> bool:
+    """Check if owner restriction applies and user is not an owner.
+
+    When ``owner_users`` is configured, only those users may use the bot
+    in private (DM) chats.  Returns True when the request should be
+    blocked — i.e. the chat is private and the user is not an owner.
+    """
+    settings = data.get("settings")
+    if not settings:
+        return False
+    owner_users: Optional[Set[int]] = None
+    raw = getattr(settings, "owner_users", None)
+    if raw:
+        owner_users = set(raw)
+    if not owner_users:
+        return False  # No owner restriction configured
+    chat = event.effective_chat
+    chat_type = getattr(chat, "type", None) if chat else None
+    if chat_type != "private":
+        return False  # Only restrict private chats
+    return user_id not in owner_users
 
 
 async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -> Any:
@@ -53,6 +78,15 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
                 auth_provider=session.auth_provider if session else None,
             )
 
+        # Block non-owners in private chats
+        if _is_owner_required_and_missing(user_id, event, data):
+            if event.effective_message:
+                await event.effective_message.reply_text(
+                    "🔒 This bot's private chat is reserved for the owner.\n"
+                    "Please use it in the group chat instead."
+                )
+            return
+
         # Continue to handler
         return await handler(event, data)
 
@@ -81,6 +115,15 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
             username=username,
             auth_provider=session.auth_provider if session else None,
         )
+
+        # Block non-owners in private chats
+        if _is_owner_required_and_missing(user_id, event, data):
+            if event.effective_message:
+                await event.effective_message.reply_text(
+                    "🔒 This bot's private chat is reserved for the owner.\n"
+                    "Please use it in the group chat instead."
+                )
+            return
 
         # Welcome message for new session
         if event.effective_message:

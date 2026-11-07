@@ -93,7 +93,9 @@ def _make_can_use_tool_callback(
                     return PermissionResultAllow()
 
                 valid, _resolved, error = security_validator.validate_path(
-                    file_path, working_directory
+                    file_path,
+                    working_directory,
+                    approved_directory_override=approved_directory,
                 )
                 if not valid:
                     logger.warning(
@@ -155,6 +157,7 @@ class ClaudeSDKManager:
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
+        approved_directory: Optional[Path] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -227,10 +230,13 @@ class ClaudeSDKManager:
 
             # Wire can_use_tool callback for preventive tool validation
             if self.security_validator:
+                effective_approved = (
+                    approved_directory or self.config.approved_directory
+                )
                 options.can_use_tool = _make_can_use_tool_callback(
                     security_validator=self.security_validator,
                     working_directory=working_directory,
-                    approved_directory=self.config.approved_directory,
+                    approved_directory=effective_approved,
                 )
 
             # Resume previous session if we have a session_id

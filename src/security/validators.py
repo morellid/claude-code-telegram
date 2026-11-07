@@ -144,7 +144,10 @@ class SecurityValidator:
         )
 
     def validate_path(
-        self, user_path: str, current_dir: Optional[Path] = None
+        self,
+        user_path: str,
+        current_dir: Optional[Path] = None,
+        approved_directory_override: Optional[Path] = None,
     ) -> Tuple[bool, Optional[Path], Optional[str]]:
         """Validate and resolve user-provided path.
 
@@ -187,12 +190,15 @@ class SecurityValidator:
             target = target.resolve()
 
             # Ensure target is within approved directory
-            if not self._is_within_directory(target, self.approved_directory):
+            effective_approved = (
+                approved_directory_override or self.approved_directory
+            ).resolve()
+            if not self._is_within_directory(target, effective_approved):
                 logger.warning(
                     "Path traversal attempt detected",
                     requested_path=user_path,
                     resolved_path=str(target),
-                    approved_directory=str(self.approved_directory),
+                    approved_directory=str(effective_approved),
                 )
                 return False, None, "Access denied: path outside approved directory"
 

@@ -278,6 +278,17 @@ class MessageOrchestrator:
         """Return working directory based on per-chat routing config."""
         return get_working_directory(chat_id, self.settings)
 
+    def _get_effective_approved_directory(self, chat_type: Optional[str]) -> Path:
+        """Return the security boundary directory based on chat type.
+
+        Group chats are restricted to group_chat_directory when configured.
+        All other chats use the full approved_directory.
+        """
+        if chat_type in (Chat.GROUP, Chat.SUPERGROUP):
+            if self.settings.group_chat_directory is not None:
+                return self.settings.group_chat_directory
+        return self.settings.approved_directory
+
     @staticmethod
     def _extract_message_thread_id(update: Update) -> Optional[int]:
         """Extract topic/thread id from update message for forum/direct topics."""
@@ -990,6 +1001,7 @@ class MessageOrchestrator:
 
         chat_id = update.effective_chat.id
         current_dir = self._get_working_directory(chat_id)
+        effective_approved = self._get_effective_approved_directory(chat_type)
         session_id = context.chat_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
@@ -1019,7 +1031,7 @@ class MessageOrchestrator:
             start_time,
             reply_markup=stop_kb,
             mcp_images=mcp_images,
-            approved_directory=self.settings.approved_directory,
+            approved_directory=effective_approved,
             draft_streamer=draft_streamer,
             interrupt_event=interrupt_event,
         )
@@ -1037,6 +1049,7 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 interrupt_event=interrupt_event,
+                approved_directory=effective_approved,
             )
 
             # New session created successfully — clear the one-shot flag
@@ -1259,6 +1272,8 @@ class MessageOrchestrator:
 
         chat_id = update.effective_chat.id
         current_dir = self._get_working_directory(chat_id)
+        doc_chat_type = update.effective_chat.type if update.effective_chat else None
+        effective_approved = self._get_effective_approved_directory(doc_chat_type)
         session_id = context.chat_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
@@ -1274,7 +1289,7 @@ class MessageOrchestrator:
             tool_log,
             time.time(),
             mcp_images=mcp_images_doc,
-            approved_directory=self.settings.approved_directory,
+            approved_directory=effective_approved,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
@@ -1286,6 +1301,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                approved_directory=effective_approved,
             )
 
             if force_new:
@@ -1460,6 +1476,8 @@ class MessageOrchestrator:
 
         chat_id = update.effective_chat.id
         current_dir = self._get_working_directory(chat_id)
+        media_chat_type = update.effective_chat.type if update.effective_chat else None
+        effective_approved = self._get_effective_approved_directory(media_chat_type)
         session_id = context.chat_data.get("claude_session_id")
         force_new = bool(context.chat_data.get("force_new_session"))
 
@@ -1472,7 +1490,7 @@ class MessageOrchestrator:
             tool_log,
             time.time(),
             mcp_images=mcp_images_media,
-            approved_directory=self.settings.approved_directory,
+            approved_directory=effective_approved,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
@@ -1484,6 +1502,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                approved_directory=effective_approved,
             )
         finally:
             heartbeat.cancel()

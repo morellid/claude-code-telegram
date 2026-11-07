@@ -259,6 +259,86 @@ async def test_middleware_wrapper_runs_for_non_bot_updates() -> None:
     assert middleware_called is True
 
 
+class TestOwnerRestriction:
+    """Verify owner_users restricts private chat access."""
+
+    @pytest.fixture
+    def owner_settings(self):
+        """Settings with owner_users configured."""
+        settings = MagicMock(spec=Settings)
+        settings.owner_users = [111111]  # Only user 111111 is owner
+        return settings
+
+    @pytest.fixture
+    def private_event(self):
+        """Event from a private chat by a non-owner user."""
+        event = MagicMock()
+        event.effective_user = MagicMock()
+        event.effective_user.id = 999999
+        event.effective_user.username = "regular_user"
+        event.effective_user.is_bot = False
+        event.effective_message = MagicMock()
+        event.effective_message.reply_text = AsyncMock()
+        event.effective_chat = MagicMock()
+        event.effective_chat.type = "private"
+        return event
+
+    @pytest.fixture
+    def group_event(self):
+        """Event from a group chat by a non-owner user."""
+        event = MagicMock()
+        event.effective_user = MagicMock()
+        event.effective_user.id = 999999
+        event.effective_user.username = "regular_user"
+        event.effective_user.is_bot = False
+        event.effective_message = MagicMock()
+        event.effective_message.reply_text = AsyncMock()
+        event.effective_chat = MagicMock()
+        event.effective_chat.type = "supergroup"
+        return event
+
+    async def test_non_owner_blocked_in_private_chat(
+        self, owner_settings, private_event
+    ):
+        """Non-owner is blocked when messaging in a private chat."""
+        from src.bot.middleware.auth import _is_owner_required_and_missing
+
+        data = {"settings": owner_settings}
+        assert _is_owner_required_and_missing(999999, private_event, data) is True
+
+    async def test_owner_allowed_in_private_chat(self, owner_settings, private_event):
+        """Owner is allowed in private chat."""
+        from src.bot.middleware.auth import _is_owner_required_and_missing
+
+        data = {"settings": owner_settings}
+        assert _is_owner_required_and_missing(111111, private_event, data) is False
+
+    async def test_non_owner_allowed_in_group_chat(self, owner_settings, group_event):
+        """Non-owner is allowed in group chat (owner restriction is private-only)."""
+        from src.bot.middleware.auth import _is_owner_required_and_missing
+
+        data = {"settings": owner_settings}
+        assert _is_owner_required_and_missing(999999, group_event, data) is False
+
+    async def test_no_restriction_when_owner_users_not_set(self, private_event):
+        """No restriction when owner_users is not configured."""
+        from src.bot.middleware.auth import _is_owner_required_and_missing
+
+        settings = MagicMock(spec=Settings)
+        settings.owner_users = None
+        data = {"settings": settings}
+        assert _is_owner_required_and_missing(999999, private_event, data) is False
+
+    async def test_no_restriction_when_owner_users_empty(self, private_event):
+        """No restriction when owner_users is an empty list."""
+        from src.bot.middleware.auth import _is_owner_required_and_missing
+
+        settings = MagicMock(spec=Settings)
+        settings.owner_users = []
+        data = {"settings": settings}
+        assert _is_owner_required_and_missing(999999, private_event, data) is False
+
+
 def test_estimate_message_cost_handles_none_text() -> None:
     """Cost estimation should not fail on service-like messages without text."""
     event = MagicMock()

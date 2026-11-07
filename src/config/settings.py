@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     allowed_users: Optional[List[int]] = Field(
         None, description="Allowed Telegram user IDs"
     )
+    owner_users: Optional[List[int]] = Field(
+        None,
+        description=(
+            "Owner Telegram user IDs (full access in private chats). "
+            "When set, only these users can use the bot in private/DM chats. "
+            "Other allowed_users can still use the bot in group chats."
+        ),
+    )
     enable_token_auth: bool = Field(
         False, description="Enable token-based authentication"
     )
@@ -305,7 +313,9 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", "notification_chat_ids", mode="before")
+    @field_validator(
+        "allowed_users", "owner_users", "notification_chat_ids", mode="before"
+    )
     @classmethod
     def parse_int_list(cls, v: Any) -> Optional[List[int]]:
         """Parse comma-separated integer lists."""
@@ -486,6 +496,31 @@ class Settings(BaseSettings):
         # Check MCP requirements
         if self.enable_mcp and not self.mcp_config_path:
             raise ValueError("mcp_config_path required when enable_mcp is True")
+
+        if self.group_chat_directory is not None:
+            try:
+                self.group_chat_directory.resolve().relative_to(
+                    self.approved_directory.resolve()
+                )
+            except ValueError:
+                import structlog as _structlog
+
+                _structlog.get_logger().warning(
+                    "group_chat_directory is outside approved_directory — "
+                    "clearing it to prevent security misconfiguration",
+                    group_chat_directory=str(self.group_chat_directory),
+                    approved_directory=str(self.approved_directory),
+                )
+                self.group_chat_directory = None
+
+        if self.owner_users and not self.group_chat_directory:
+            import structlog as _structlog
+
+            _structlog.get_logger().warning(
+                "owner_users is set but group_chat_directory is not configured — "
+                "group chat users will have full approved_directory access. "
+                "Set GROUP_CHAT_DIRECTORY to restrict group chat access.",
+            )
 
         if self.enable_project_threads:
             if (

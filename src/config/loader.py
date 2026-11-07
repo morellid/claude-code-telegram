@@ -203,6 +203,12 @@ def create_test_config(**overrides: Any) -> Settings:
     # Apply any overrides
     test_values.update(overrides)
 
+    # Clear per-chat directories that may have leaked from a real .env file —
+    # they would fail cross-field validation if they sit outside the test
+    # approved_directory.  Tests that need them will pass them explicitly.
+    for key in ("personal_chat_directory", "group_chat_directory"):
+        test_values.setdefault(key, None)
+
     # Ensure test directory exists
     test_dir = Path(test_values["approved_directory"])
     test_dir.mkdir(parents=True, exist_ok=True)

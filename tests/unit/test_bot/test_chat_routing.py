@@ -165,3 +165,58 @@ def test_build_group_prompt_limits_history_to_context_window() -> None:
     assert "User 2: msg 2" not in prompt
     assert f"User 3: msg 3" in prompt
     assert prompt.endswith("]\n\nsummarize this")
+
+
+# --- Tests for _get_effective_approved_directory ---
+
+from unittest.mock import MagicMock
+
+from telegram import Chat
+
+from src.bot.orchestrator import MessageOrchestrator
+
+
+def test_effective_approved_directory_group_chat_uses_group_dir(tmp_path) -> None:
+    """Group chat uses group_chat_directory as the security boundary."""
+    group_dir = tmp_path / "group"
+    group_dir.mkdir()
+    settings = create_test_config(
+        approved_directory=str(tmp_path),
+        group_chat_directory=str(group_dir),
+    )
+    orchestrator = MessageOrchestrator(settings, {})
+
+    result = orchestrator._get_effective_approved_directory(Chat.SUPERGROUP)
+    assert result == group_dir.resolve()
+
+
+def test_effective_approved_directory_group_without_group_dir(tmp_path) -> None:
+    """Group chat without group_chat_directory falls back to approved_directory."""
+    settings = create_test_config(approved_directory=str(tmp_path))
+    orchestrator = MessageOrchestrator(settings, {})
+
+    result = orchestrator._get_effective_approved_directory(Chat.SUPERGROUP)
+    assert result == tmp_path.resolve()
+
+
+def test_effective_approved_directory_private_chat(tmp_path) -> None:
+    """Private chat always uses approved_directory."""
+    group_dir = tmp_path / "group"
+    group_dir.mkdir()
+    settings = create_test_config(
+        approved_directory=str(tmp_path),
+        group_chat_directory=str(group_dir),
+    )
+    orchestrator = MessageOrchestrator(settings, {})
+
+    result = orchestrator._get_effective_approved_directory("private")
+    assert result == tmp_path.resolve()
+
+
+def test_effective_approved_directory_none_chat_type(tmp_path) -> None:
+    """None chat type defaults to approved_directory."""
+    settings = create_test_config(approved_directory=str(tmp_path))
+    orchestrator = MessageOrchestrator(settings, {})
+
+    result = orchestrator._get_effective_approved_directory(None)
+    assert result == tmp_path.resolve()

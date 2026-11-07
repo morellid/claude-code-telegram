@@ -106,9 +106,12 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Create security components
     providers = []
 
-    # Add whitelist provider if users are configured
-    if config.allowed_users:
-        providers.append(WhitelistAuthProvider(config.allowed_users))
+    # Add whitelist provider if users are configured.
+    # Merge owner_users into the whitelist so owners are always authenticated
+    # without requiring duplicate IDs in both lists.
+    all_allowed = set(config.allowed_users or []) | set(config.owner_users or [])
+    if all_allowed:
+        providers.append(WhitelistAuthProvider(list(all_allowed)))
 
     # Add token provider if enabled
     if config.enable_token_auth:
