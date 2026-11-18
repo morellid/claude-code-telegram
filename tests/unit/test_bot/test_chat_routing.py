@@ -110,6 +110,39 @@ def test_is_group_triggered_rejects_non_matching_messages() -> None:
     assert is_group_triggered("/other@test_bot summarize this", "claude") is False
 
 
+def test_is_group_triggered_matches_bot_mention() -> None:
+    """An @mention of the bot anywhere in the message triggers."""
+    assert is_group_triggered("@test_bot summarize this", "claude", "test_bot")
+    assert is_group_triggered("can you help, @Test_Bot?", "claude", "test_bot")
+
+
+def test_is_group_triggered_ignores_other_mentions() -> None:
+    """Mentions of other users, lookalikes and emails do not trigger."""
+    assert is_group_triggered("@leonardo look", "claude", "test_bot") is False
+    assert is_group_triggered("@test_bot2 look", "claude", "test_bot") is False
+    assert is_group_triggered("mail x@test_bot now", "claude", "test_bot") is False
+    assert is_group_triggered("@test_bot look", "claude") is False
+
+
+def test_build_group_prompt_strips_bot_mention() -> None:
+    """The mention is removed from the prompt sent to Claude."""
+    assert (
+        build_group_prompt([], "@test_bot summarize this", "claude", "test_bot")
+        == "summarize this"
+    )
+    assert (
+        build_group_prompt([], "summarize this @Test_Bot", "claude", "test_bot")
+        == "summarize this"
+    )
+
+
+def test_build_group_prompt_keeps_newlines() -> None:
+    """Multi-line prompts (code blocks) survive with or without a mention."""
+    code = "fix:\n```\ndef f():\n    return 1\n```"
+    assert build_group_prompt([], f"/claude {code}", "claude", "test_bot") == code
+    assert build_group_prompt([], f"@test_bot {code}", "claude", "test_bot") == code
+
+
 def test_strip_group_trigger_prefix_handles_slash_prefix() -> None:
     """Slash commands strip both the slash and any @botname suffix."""
     assert strip_group_trigger_prefix("/claude", "claude") == ""

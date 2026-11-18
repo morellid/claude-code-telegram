@@ -971,12 +971,15 @@ class MessageOrchestrator:
             )
             append_to_buffer(buffer, sender_name or "Unknown", message_text)
             prefix = self.settings.group_trigger_prefix
-            if not is_group_triggered(message_text, prefix):
+            bot_username = context.bot.username
+            if not is_group_triggered(message_text, prefix, bot_username):
                 # Not triggered — store only, no response
                 return
 
             history = buffer[:-1]  # All messages except the one just added
-            message_text = build_group_prompt(history, message_text, prefix)
+            message_text = build_group_prompt(
+                history, message_text, prefix, bot_username
+            )
 
         logger.info(
             "Agentic text message",

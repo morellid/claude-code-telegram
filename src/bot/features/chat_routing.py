@@ -10,13 +10,16 @@ an unrecognised chat fall back to ``APPROVED_DIRECTORY``.
 
 **Group trigger command + conversation history**
 In group chats Claude is silent by default.  Only the ``/<prefix>`` command
-(default: ``/claude``, also ``/claude@botname``) triggers a response.  All other messages are stored in a
+(default: ``/claude``, also ``/claude@botname``) or an @-mention of the bot
+triggers a response.  All other messages are stored in a
 per-chat rolling buffer so that when Claude *is* triggered it receives the
 recent conversation as context, allowing it to answer questions about what
 was discussed without every participant having to @-mention the bot.
 """
 
+import re
 from pathlib import Path
+from typing import Optional
 
 from src.config.settings import Settings
 
@@ -39,25 +42,57 @@ def format_history(messages: list[dict[str, str]]) -> str:
     return "\n".join(f"{msg['sender']}: {msg['text']}" for msg in messages)
 
 
-def is_group_triggered(message_text: str, trigger_prefix: str) -> bool:
-    """Return whether a group message is the ``/<prefix>`` command."""
+def _mention_pattern(bot_username: str) -> re.Pattern[str]:
+    """Match ``@bot_username`` as a whole mention, case-insensitively."""
+    return re.compile(rf"(?<!\w)@{re.escape(bot_username)}(?!\w)", re.IGNORECASE)
+
+
+def _is_command_trigger(message_text: str, trigger_prefix: str) -> bool:
     command = message_text.split(maxsplit=1)[0].lower() if message_text else ""
     return command.split("@", 1)[0] == f"/{trigger_prefix.lower()}"
 
 
-def strip_group_trigger_prefix(message_text: str, trigger_prefix: str) -> str:
-    """Remove the ``/<prefix>`` or ``/<prefix>@botname`` command."""
-    if not is_group_triggered(message_text, trigger_prefix):
-        return message_text
-    parts = message_text.split(maxsplit=1)
-    return parts[1] if len(parts) > 1 else ""
+def is_group_triggered(
+    message_text: str, trigger_prefix: str, bot_username: Optional[str] = None
+) -> bool:
+    """Return whether a group message addresses the bot.
+
+    True for the ``/<prefix>`` command and, when *bot_username* is given,
+    for a message that @-mentions the bot.
+    """
+    if _is_command_trigger(message_text, trigger_prefix):
+        return True
+    return bool(
+        bot_username
+        and message_text
+        and _mention_pattern(bot_username).search(message_text)
+    )
+
+
+def strip_group_trigger_prefix(
+    message_text: str, trigger_prefix: str, bot_username: Optional[str] = None
+) -> str:
+    """Remove the ``/<prefix>`` command and any @-mention of the bot."""
+    if _is_command_trigger(message_text, trigger_prefix):
+        parts = message_text.split(maxsplit=1)
+        message_text = parts[1] if len(parts) > 1 else ""
+    if bot_username:
+        # Tidy only the spaces around the mention: newlines (code blocks) stay.
+        mention = _mention_pattern(bot_username).pattern
+        message_text = re.sub(
+            rf"[ \t]*{mention}[ \t]*", " ", message_text, flags=re.IGNORECASE
+        ).strip()
+    return message_text
 
 
 def build_group_prompt(
-    history: list[dict[str, str]], message_text: str, trigger_prefix: str
+    history: list[dict[str, str]],
+    message_text: str,
+    trigger_prefix: str,
+    bot_username: Optional[str] = None,
 ) -> str:
     """Build the Claude prompt for a triggered group message."""
-    stripped = strip_group_trigger_prefix(message_text, trigger_prefix)
+    stripped = strip_group_trigger_prefix(message_text, trigger_prefix, bot_username)
     context_messages = history[-HISTORY_CONTEXT_SIZE:]
     if not context_messages:
         return stripped

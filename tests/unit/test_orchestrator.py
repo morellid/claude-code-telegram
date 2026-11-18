@@ -1009,6 +1009,7 @@ def _group_update(chat_id: int, text: str) -> MagicMock:
 def _group_context(settings, claude_integration) -> MagicMock:
     context = MagicMock()
     context.chat_data = {}
+    context.bot.username = "mybot"
     context.bot_data = {
         "settings": settings,
         "claude_integration": claude_integration,
@@ -1046,6 +1047,36 @@ async def test_group_trigger_runs_claude_inside_group_directory(vox_settings, de
     kwargs = claude_integration.run_command.call_args.kwargs
     assert kwargs["working_directory"] == vox_settings.group_chat_directory
     assert kwargs["approved_directory"] == vox_settings.group_chat_directory
+
+
+async def test_group_mention_triggers_claude_without_the_mention(vox_settings, deps):
+    """An @mention of the bot triggers Claude; the mention is not in the prompt."""
+    orchestrator = MessageOrchestrator(vox_settings, deps)
+    response = MagicMock(session_id="s", content="ok", tools_used=[])
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=response)
+
+    await orchestrator.agentic_text(
+        _group_update(-100, "@mybot hi"),
+        _group_context(vox_settings, claude_integration),
+    )
+
+    kwargs = claude_integration.run_command.call_args.kwargs
+    assert kwargs["prompt"] == "hi"
+    assert kwargs["working_directory"] == vox_settings.group_chat_directory
+
+
+async def test_group_message_without_trigger_is_silent(vox_settings, deps):
+    """A plain group message, or a mention of someone else, gets no answer."""
+    orchestrator = MessageOrchestrator(vox_settings, deps)
+    claude_integration = AsyncMock()
+
+    await orchestrator.agentic_text(
+        _group_update(-100, "@leonardo hi"),
+        _group_context(vox_settings, claude_integration),
+    )
+
+    claude_integration.run_command.assert_not_called()
 
 
 async def test_unconfigured_group_is_ignored(vox_settings, deps):
